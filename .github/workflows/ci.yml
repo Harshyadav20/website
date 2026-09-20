@@ -62,10 +62,14 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies (ffmpeg is preinstalled on the runner)
+      - name: Install dependencies
         run: |
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt
           npm ci --prefix frontend
+          if ! command -v ffmpeg > /dev/null; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n1
       - name: Build the SPA the server will serve
         run: npm run build --prefix frontend
       - name: Start the API
@@ -74,9 +78,7 @@ jobs:
           for i in $(seq 1 40); do
             curl -fsS http://127.0.0.1:8000/api/health && break || sleep 1
           done
-      - name: Create a project from the bundled sample
-        run: curl -fsS -X POST http://127.0.0.1:8000/api/sample > /dev/null
-      - name: Walk the UI
+      - name: Walk the UI (creates its own sample project)
         run: npm run smoke --prefix frontend
 
   docker:

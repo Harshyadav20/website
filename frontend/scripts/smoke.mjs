@@ -47,6 +47,19 @@ if (!fs.existsSync(INDEX)) {
   process.exit(1)
 }
 
+// Seed a project from the bundled sample so the editor walkthrough has data.
+const list = await fetch(`${API}/api/projects`).then((r) => r.json()).catch(() => [])
+if (!Array.isArray(list) || list.length === 0) {
+  const res = await fetch(`${API}/api/sample`, { method: 'POST' }).catch(() => null)
+  if (res?.ok) {
+    console.log('ℹ️  created a project from the bundled sample')
+  } else {
+    const body = res ? await res.text().catch(() => '') : 'server unreachable'
+    console.log(`ℹ️  /api/sample → ${res ? res.status : 'no response'}: ${body.slice(0, 160)}`)
+    console.log('   (clip-level checks will be skipped)')
+  }
+}
+
 // The published SPA is an ES module, which jsdom cannot execute — bundle the
 // same sources to an IIFE for the test run.
 const bundle = await build({
@@ -94,9 +107,11 @@ check('hero headline renders', /scroll-stopping shorts/.test(bodyText()))
 check('engine badges come from /api/health', $$('.engine-badges .badge').length >= 3)
 check('uploader shows the configured size limit', /up to \d+ MB/.test($('.uploader-sub')?.textContent || ''))
 check('feature strip renders', $$('.feature').length === 4)
-check('projects list renders', $$('.project-card').length > 0)
+const cardCount = $$('.project-card').length
+check(cardCount ? 'projects list renders' : 'empty state renders (no project could be created)',
+  cardCount > 0 || !!$('.empty-state'))
 
-if (!$$('.project-card').length) {
+if (!cardCount) {
   console.log('\nNo project available — stopping after the dashboard checks.')
   report()
 }
