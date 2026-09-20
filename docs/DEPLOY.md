@@ -68,6 +68,53 @@ Dockerfile path `./Dockerfile` → Health check path `/api/health`.
 
 ---
 
+## 1b. Render native runtime (no Docker) — exact field values
+
+If Render shows you the **Build Command / Start Command** form, you picked the
+native **Python** runtime. That works too: Render's native runtimes already ship
+`ffmpeg`, `node`, `npm`, `curl` and `git` on Debian 12, and the model folder
+`assets/models/` is auto-detected.
+
+Set **Runtime = Python** (or Node — Python is correct here) and fill in:
+
+**Build Command**
+
+```bash
+pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build && cd .. && mkdir -p assets/models && curl -fsSL -o /tmp/vosk.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && python -c "import zipfile; zipfile.ZipFile('/tmp/vosk.zip').extractall('assets/models')" && test -d assets/models/vosk-model-small-en-us-0.15/conf
+```
+
+**Start Command**
+
+```bash
+cd backend && PYTHONPATH=. python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+**Environment variables** (Dashboard → Environment)
+
+| Key | Value | Why |
+| --- | --- | --- |
+| `PYTHON_VERSION` | `3.11.9` | Render defaults to 3.14; this pins the version the project is tested on |
+| `MAX_UPLOAD_MB` | `200` | free instance has 512 MB RAM |
+| `EPHEMERAL_STORAGE` | `1` | shows the "upload data is cleared on restart" banner |
+| `DATA_DIR` | `/opt/render/project/src/backend` | writable location for uploads/renders/db (use a disk mount path if you attach one) |
+| `GEMINI_API_KEY` | *(optional)* | free key from <https://aistudio.google.com/apikey> |
+| `DEPLOY_TARGET` | `render` | label surfaced in `/api/health` |
+
+**Health check path:** `/api/health`
+
+Notes:
+- `VOSK_MODEL_PATH` is not needed — the model is unpacked to `assets/models/`,
+  which `config.py` already searches. `assets/models/` is gitignored, so the
+  40 MB download never lands in Git.
+- If `/api/health` reports `"ffmpeg": false`, set `FFMPEG_BIN=/usr/bin/ffmpeg`.
+- This path was verified locally end-to-end (sample → analysis → captioned
+  9:16 render) with a fresh virtualenv and these exact commands.
+- Prefer Docker if you want the pinned FFmpeg build and the non-root image:
+  the native runtime uses Debian's ffmpeg, which the app reports in
+  `/api/health` under `ffmpeg_path`.
+
+---
+
 ## 2. Any Docker host
 
 ```bash

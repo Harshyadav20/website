@@ -101,6 +101,10 @@ Everything needed is in this repo, so Render can build it unattended.
 > Merge this work into `main` first, or point Render at the
 > `arena/01a0be6f-website` branch in the service settings.
 
+Deploying with Render's **native Python runtime** instead (the form that asks
+for Build/Start commands)? Copy the exact commands and environment variables
+from [docs/DEPLOY.md](docs/DEPLOY.md#1b-render-native-runtime-no-docker--exact-field-values).
+
 ### What the free plan means
 
 | Limit | Effect | Mitigation in this repo |

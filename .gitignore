@@ -13,6 +13,9 @@ backend/vendor/
 backend/static/
 backend/.env
 
+# Speech model downloaded at build time (Docker/Render) — never commit it
+assets/models/
+
 # Vendored heavy deps are re-fetched by scripts/ensure_deps.sh
 
 # Node / frontend
