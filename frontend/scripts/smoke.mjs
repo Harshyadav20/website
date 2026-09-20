@@ -13,12 +13,22 @@
  *
  * Overrides: API=http://host:port  BUNDLE=/path/to/static-dir
  */
-import { JSDOM, VirtualConsole } from 'jsdom'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
+
+// jsdom 30 needs Node >= 22.22 — fail with a readable message instead of a
+// stack trace from deep inside undici.
+let JSDOM, VirtualConsole
+try {
+  ({ JSDOM, VirtualConsole } = await import('jsdom'))
+} catch (err) {
+  console.error(`✖ The UI smoke test needs Node 22.22+ (running ${process.version}).`)
+  console.error(`  ${String(err).split('\n')[0]}`)
+  process.exit(1)
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const frontendDir = path.resolve(here, '..')

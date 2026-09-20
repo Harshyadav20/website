@@ -191,6 +191,8 @@ cd frontend && npm run smoke
 
 Clip-dependent assertions are skipped automatically when the project has not
 been analyzed yet, so it also runs on a backend without speech-to-text.
+The smoke test uses jsdom, which needs **Node 22.22+** (`npm run build` itself
+works on Node 18+).
 GitHub Actions runs the backend, frontend-build and Docker jobs on every push.
 
 ## Configuration
