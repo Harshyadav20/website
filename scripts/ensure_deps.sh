@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent bootstrap for the AI Video Clipper & Editor backend.
+# Idempotent bootstrap for the Clipper AI backend.
 # Fetches anything missing: ffmpeg binary, vosk speech model, python vendor deps.
 # Safe to run repeatedly — existing pieces are left alone.
 set -uo pipefail
@@ -42,13 +42,15 @@ if [ -d "$VOSK_DIR" ]; then
 else
   say "vosk model: downloading small English model (~40 MB)…"
   mkdir -p "$(dirname "$VOSK_DIR")" /tmp/voskdl
-  # Primary source (real machines):
-  if curl -sfL --max-time 240 -o /tmp/voskdl/model.zip \
+  # Primary source (alphacephei.com), then a GitHub mirror for restricted networks.
+  if curl -sfL --retry 2 --connect-timeout 20 --max-time 420 -o /tmp/voskdl/model.zip \
       https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip; then
     say "vosk model: downloaded from alphacephei.com"
+  elif curl -sfL --retry 2 --connect-timeout 20 --max-time 420 -o /tmp/voskdl/model.zip \
+      https://github.com/kercre123/vosk-models/raw/main/vosk-model-small-en-us-0.15.zip; then
+    say "vosk model: downloaded from GitHub mirror"
   elif command -v gh >/dev/null 2>&1; then
-    # GitHub mirror (works in restricted networks)
-    say "vosk model: trying GitHub mirror…"
+    say "vosk model: trying GitHub API…"
     gh api -H "Accept: application/vnd.github.raw" \
       repos/kercre123/vosk-models/contents/vosk-model-small-en-us-0.15.zip \
       > /tmp/voskdl/model.zip || true

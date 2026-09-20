@@ -23,3 +23,8 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# SQLite database + WAL sidecar files
+backend/app.db
+backend/app.db-wal
+backend/app.db-shm

@@ -1,0 +1,153 @@
+/**
+ * Clipper AI — browser-less UI smoke test.
+ *
+ * Renders the real React app inside jsdom against a running backend and walks
+ * the dashboard → editor flow, failing on any JavaScript error or broken arrow.
+ * Clip-dependent checks are skipped (with a warning) when the project has no
+ * analysis yet, so this also works on a backend without speech-to-text.
+ *
+ * Usage:
+ *   npm run build                      # once, so the API serves the SPA
+ *   cd backend && PYTHONPATH=vendor python3 -m uvicorn app.main:app --port 8000
+ *   cd frontend && npm run smoke
+ *
+ * Overrides: API=http://host:port  BUNDLE=/path/to/static-dir
+ */
+import { JSDOM, VirtualConsole } from 'jsdom'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const frontendDir = path.resolve(here, '..')
+const repoRoot = path.resolve(frontendDir, '..')
+
+const API = process.env.API || 'http://127.0.0.1:8000'
+const STATIC_DIR = process.env.BUNDLE || path.join(repoRoot, 'backend', 'static')
+const INDEX = path.join(STATIC_DIR, 'index.html')
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+const errors = []
+let skipped = 0
+
+const fail = (msg) => errors.push(msg)
+const check = (label, cond) => {
+  console.log(`${cond ? '✅' : '❌'} ${label}`)
+  if (!cond) fail(`assertion failed: ${label}`)
+}
+const skip = (label) => {
+  skipped += 1
+  console.log(`⏭️  ${label} (needs an analyzed project)`)
+}
+
+if (!fs.existsSync(INDEX)) {
+  console.error(`✖ ${INDEX} not found — run "npm run build" first.`)
+  process.exit(1)
+}
+
+// The published SPA is an ES module, which jsdom cannot execute — bundle the
+// same sources to an IIFE for the test run.
+const bundle = await build({
+  entryPoints: [path.join(frontendDir, 'src', 'main.jsx')],
+  bundle: true,
+  format: 'iife',
+  define: { 'process.env.NODE_ENV': '"production"' },
+  outfile: path.join(os.tmpdir(), 'clipper-ai-smoke.js'),
+  logLevel: 'warning',
+})
+const bundlePath = bundle.outputFiles?.[0]?.path
+  || path.join(os.tmpdir(), 'clipper-ai-smoke.js')
+
+const virtualConsole = new VirtualConsole()
+virtualConsole.on('jsdomError', (e) => {
+  if (!/Not implemented/.test(e.message)) fail(`jsdomError: ${e.message}`)
+})
+virtualConsole.on('error', (...args) => fail(`console.error: ${args.join(' ')}`))
+
+const dom = new JSDOM(fs.readFileSync(INDEX, 'utf8'), {
+  url: `${API}/`,
+  runScripts: 'dangerously',
+  pretendToBeVisual: true,
+  virtualConsole,
+})
+const { window } = dom
+window.fetch = (url, opts) => fetch(new URL(url, API).href, opts)
+window.addEventListener('error', (e) => fail(`window.error: ${e.message}`))
+window.addEventListener('unhandledrejection', (e) => fail(`unhandled rejection: ${e.reason}`))
+
+const $ = (sel) => window.document.querySelector(sel)
+const $$ = (sel) => [...window.document.querySelectorAll(sel)]
+const bodyText = () => window.document.body.textContent || ''
+const click = (el) => el.dispatchEvent(
+  new window.MouseEvent('click', { bubbles: true, cancelable: true }))
+
+const script = window.document.createElement('script')
+script.textContent = fs.readFileSync(bundlePath, 'utf8')
+window.document.body.appendChild(script)
+await wait(1400)
+
+// ─────────────────────────────────────────────────────── dashboard
+check('brand renders "Clipper AI"', /Clipper\s*AI/.test($('.brand-name')?.textContent || ''))
+check('hero headline renders', /scroll-stopping shorts/.test(bodyText()))
+check('engine badges come from /api/health', $$('.engine-badges .badge').length >= 3)
+check('uploader shows the configured size limit', /up to \d+ MB/.test($('.uploader-sub')?.textContent || ''))
+check('feature strip renders', $$('.feature').length === 4)
+check('projects list renders', $$('.project-card').length > 0)
+
+if (!$$('.project-card').length) {
+  console.log('\nNo project available — stopping after the dashboard checks.')
+  report()
+}
+
+// ─────────────────────────────────────────────────────── editor
+click($$('.project-card')[0])
+await wait(1600)
+check('editor renders', !!$('.editor-grid'))
+check('player + crop guide render', !!$('.player-box video') && !!$('.crop-guide'))
+check('timeline renders', !!$('.timeline-track'))
+check('style presets render', $$('.style-tile').length >= 7)
+check('effects panel renders', /Captions & effects/.test(bodyText()))
+check('render panel renders', /Export/.test(bodyText()))
+check('keyboard hints render', $$('.kbd-hints kbd').length >= 5)
+check('AI command box renders', !!$('.command-box'))
+
+const clips = $$('.clip-card')
+if (clips.length) {
+  click(clips[0])
+  await wait(600)
+  check('selecting a clip highlights it', !!$('.clip-card.active'))
+  check('clip window appears on the timeline', !!$('.tl-clip'))
+  check('render button shows the clip length', /Render \d+s clip/.test($('.render-row .btn.primary')?.textContent || ''))
+} else {
+  skip('clip selection')
+  skip('clip window on the timeline')
+  skip('render button label')
+}
+
+click($$('.style-tile')[1])
+await wait(250)
+check('style switching works', $$('.style-tile')[1].classList.contains('active'))
+
+const examples = $$('.example-chip')
+if (examples.length && !examples[0].disabled) {
+  click(examples[0])
+  await wait(2200)
+  check('AI command returns a toast', $$('.toast').length > 0)
+} else {
+  skip('AI command')
+}
+
+click($('.editor-head .btn.ghost'))
+await wait(600)
+check('navigates back to the dashboard', !!$('.dashboard'))
+
+report()
+
+function report() {
+  const suffix = skipped ? ` (${skipped} skipped)` : ''
+  console.log(`\n${errors.length ? '❌' : '✅'} smoke test finished with ${errors.length} error(s)${suffix}`)
+  errors.slice(0, 20).forEach((e) => console.log(`   • ${e}`))
+  process.exit(errors.length ? 1 : 0)
+}
