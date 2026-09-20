@@ -79,7 +79,15 @@ jobs:
             curl -fsS http://127.0.0.1:8000/api/health && break || sleep 1
           done
       - name: Walk the UI (creates its own sample project)
-        run: npm run smoke --prefix frontend
+        run: |
+          set -o pipefail
+          if npm run smoke --prefix frontend 2>&1 | tee /tmp/smoke.log; then
+            exit 0
+          fi
+          echo "───── smoke output ─────"; cat /tmp/smoke.log
+          failures=$(grep -E '^   •' /tmp/smoke.log | head -8 | paste -sd ' | ' -)
+          echo "::error title=UI smoke failures::${failures:-see the step log}"
+          exit 1
 
   docker:
     name: Docker image (deployability)

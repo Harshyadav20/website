@@ -29,6 +29,19 @@ const STATIC_DIR = process.env.BUNDLE || path.join(repoRoot, 'backend', 'static'
 const INDEX = path.join(STATIC_DIR, 'index.html')
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Poll until `predicate` is true (CI runners are slower than laptops). */
+async function waitFor(predicate, { timeout = 15000, interval = 100 } = {}) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    try {
+      if (predicate()) return true
+    } catch { /* keep waiting */ }
+    await wait(interval)
+  }
+  return false
+}
+
 const errors = []
 let skipped = 0
 
@@ -99,7 +112,12 @@ const click = (el) => el.dispatchEvent(
 const script = window.document.createElement('script')
 script.textContent = fs.readFileSync(bundlePath, 'utf8')
 window.document.body.appendChild(script)
-await wait(1400)
+
+// Wait for the first data-driven render (health badges + project list).
+const loaded = await waitFor(
+  () => window.document.querySelector('.engine-badges .badge')
+    && window.document.querySelector('.project-card, .empty-state, .skeleton-card'))
+if (!loaded) console.log('⚠️  the dashboard was still loading after 15s — continuing anyway')
 
 // ─────────────────────────────────────────────────────── dashboard
 check('brand renders "Clipper AI"', /Clipper\s*AI/.test($('.brand-name')?.textContent || ''))
@@ -118,7 +136,10 @@ if (!cardCount) {
 
 // ─────────────────────────────────────────────────────── editor
 click($$('.project-card')[0])
-await wait(1600)
+if (!await waitFor(() => window.document.querySelector('.editor-grid'))) {
+  console.log('⚠️  the editor did not render within 15s')
+}
+await waitFor(() => window.document.querySelector('.style-tile'))
 check('editor renders', !!$('.editor-grid'))
 check('player + crop guide render', !!$('.player-box video') && !!$('.crop-guide'))
 check('timeline renders', !!$('.timeline-track'))
@@ -131,7 +152,7 @@ check('AI command box renders', !!$('.command-box'))
 const clips = $$('.clip-card')
 if (clips.length) {
   click(clips[0])
-  await wait(600)
+  await waitFor(() => window.document.querySelector('.clip-card.active'))
   check('selecting a clip highlights it', !!$('.clip-card.active'))
   check('clip window appears on the timeline', !!$('.tl-clip'))
   check('render button shows the clip length', /Render \d+s clip/.test($('.render-row .btn.primary')?.textContent || ''))
@@ -142,20 +163,20 @@ if (clips.length) {
 }
 
 click($$('.style-tile')[1])
-await wait(250)
+await waitFor(() => window.document.querySelectorAll('.style-tile')[1]?.classList.contains('active'))
 check('style switching works', $$('.style-tile')[1].classList.contains('active'))
 
 const examples = $$('.example-chip')
 if (examples.length && !examples[0].disabled) {
   click(examples[0])
-  await wait(2200)
-  check('AI command returns a toast', $$('.toast').length > 0)
+  const toasted = await waitFor(() => window.document.querySelector('.toast'), { timeout: 10000 })
+  check('AI command returns a toast', toasted && $$('.toast').length > 0)
 } else {
   skip('AI command')
 }
 
 click($('.editor-head .btn.ghost'))
-await wait(600)
+await waitFor(() => window.document.querySelector('.dashboard'))
 check('navigates back to the dashboard', !!$('.dashboard'))
 
 report()
