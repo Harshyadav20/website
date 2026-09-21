@@ -3,7 +3,7 @@ SHELL := /bin/bash
 PORT ?= 8000
 IMAGE ?= clipper-ai
 
-.PHONY: help deps build dev run api docker docker-run up down test smoke clean
+.PHONY: help deps build dev run preview seed api docker docker-run up down test smoke clean
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -22,6 +22,11 @@ api: ## run the API (serves the SPA if it has been built)
 	cd backend && PYTHONPATH=vendor python3 -m uvicorn app.main:app --host 0.0.0.0 --port $(PORT)
 
 run: build api ## build the SPA then serve everything on :$(PORT)
+
+preview: deps build api ## restore everything (ffmpeg + model + deps + SPA) then serve
+
+seed: ## create the bundled sample project and render its top clip
+	python3 scripts/seed_preview.py
 
 docker: ## build the container image
 	docker build -t $(IMAGE) .

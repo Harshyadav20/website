@@ -172,6 +172,8 @@ Full walkthrough, other hosts (Fly.io, Railway, VPS + nginx) and troubleshooting
 ## Developing
 
 ```bash
+make preview     # one shot: deps + SPA build + serve on :8000 (best first command)
+make seed        # create the sample project and render its top clip
 make deps        # ffmpeg + vosk model + python deps (idempotent)
 make build       # build the SPA into backend/static
 make api         # run the API on :8000 (serves the built SPA)
