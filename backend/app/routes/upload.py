@@ -5,7 +5,6 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
 
 from .. import config
 from ..models import project as db
@@ -16,10 +15,19 @@ from ..services.video_analyzer import make_thumbnail
 router = APIRouter(prefix="/api", tags=["projects"])
 
 
+def _require_ffmpeg() -> None:
+    """Every path that probes/cuts media needs FFmpeg — say so in JSON."""
+    if not config.FFMPEG_BIN:
+        raise HTTPException(
+            503,
+            "FFmpeg is not available on this server. Install it, run "
+            "scripts/ensure_deps.sh, or point FFMPEG_BIN at the binary.",
+        )
+
+
 @router.post("/upload")
 async def upload(file: UploadFile = File(...)):
-    if not config.FFMPEG_BIN:
-        raise HTTPException(500, "FFmpeg not available on the server. Run scripts/ensure_deps.sh.")
+    _require_ffmpeg()
     stem = safe_stem(file.filename or "video")
     pid = db.new_id("prj")
     dest = config.UPLOADS_DIR / f"{pid}{ext_of(file.filename or '')}"
@@ -54,6 +62,7 @@ async def upload(file: UploadFile = File(...)):
 @router.post("/sample")
 def use_sample():
     """Create a project from the bundled demo video (no re-upload needed)."""
+    _require_ffmpeg()
     samples = sorted(config.SAMPLES_DIR.glob("*.mp4"))
     if not samples:
         raise HTTPException(404, "No sample video bundled. Upload your own!")
@@ -61,7 +70,11 @@ def use_sample():
     pid = db.new_id("prj")
     dest = config.UPLOADS_DIR / f"{pid}.mp4"
     shutil.copy(src, dest)
-    meta = probe(dest)
+    try:
+        meta = probe(dest)
+    except FFmpegError as e:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(500, f"Could not read the sample video: {e}") from e
     meta["size"] = dest.stat().st_size
     db.create_project("Sample — Creator Podcast", src.name, str(dest), meta, pid=pid)
     make_thumbnail(pid)

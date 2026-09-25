@@ -1,9 +1,29 @@
-"""Application paths, engine discovery and feature flags."""
+"""Application paths, engine discovery and feature flags.
+
+Everything that can differ between a laptop run and a hosted container
+(Render, Fly, Railway, docker-compose…) is resolved from the environment:
+
+    DATA_DIR      root for uploads / renders / captions / db  (default backend/)
+    UPLOADS_DIR   explicit override for uploads
+    RENDERS_DIR   explicit override for renders
+    CAPTIONS_DIR  explicit override for caption sidecars
+    DB_PATH       explicit override for the SQLite file
+    STATIC_DIR    built SPA (default backend/static)
+    PORT          port the HTTP server binds to (used by the entrypoint)
+
+If `DATA_DIR` is not writable the app transparently falls back to a temp
+directory instead of crashing on boot.
+"""
 from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from pathlib import Path
+
+APP_NAME = "Clipper AI"
+APP_TAGLINE = "AI Video Clipper & Editor"
+APP_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------- paths
 BASE_DIR = Path(__file__).resolve().parent.parent          # backend/
@@ -11,24 +31,68 @@ REPO_ROOT = BASE_DIR.parent                               # repo root
 APP_DIR = BASE_DIR / "app"
 VENDOR_DIR = BASE_DIR / "vendor"                          # pip --target deps
 
-ASSETS_DIR = REPO_ROOT / "assets"                         # fonts / music / sfx / templates
+ASSETS_DIR = Path(os.environ.get("ASSETS_DIR") or (REPO_ROOT / "assets"))
 FONTS_DIR = ASSETS_DIR / "fonts"
 MUSIC_DIR = ASSETS_DIR / "music"
 SFX_DIR = ASSETS_DIR / "sfx"
 TEMPLATES_DIR = ASSETS_DIR / "templates"
-
-UPLOADS_DIR = BASE_DIR / "uploads"
 SAMPLES_DIR = ASSETS_DIR / "samples"                 # bundled demo media (committed)
+
+STATIC_DIR = Path(os.environ.get("STATIC_DIR") or (BASE_DIR / "static"))
+
+
+def _writable(path: Path) -> bool:
+    """True when `path` exists (or can be created) and we may write into it."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write-probe"
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _resolve_data_root() -> tuple[Path, bool]:
+    """Pick a writable data root. Returns (path, used_fallback)."""
+    preferred = Path(os.environ["DATA_DIR"]).expanduser() if os.environ.get("DATA_DIR") \
+        else BASE_DIR
+    if _writable(preferred):
+        return preferred, False
+    fallback = Path(tempfile.gettempdir()) / "clipper-ai-data"
+    _writable(fallback)
+    return fallback, True
+
+
+DATA_ROOT, DATA_FALLBACK = _resolve_data_root()
+
+UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR") or (DATA_ROOT / "uploads"))
+RENDERS_DIR = Path(os.environ.get("RENDERS_DIR") or (DATA_ROOT / "renders"))
+CAPTIONS_DIR = Path(os.environ.get("CAPTIONS_DIR") or (DATA_ROOT / "captions"))
+DB_PATH = Path(os.environ.get("DB_PATH") or (DATA_ROOT / "app.db"))
 THUMBS_DIR = UPLOADS_DIR / "thumbs"
-RENDERS_DIR = BASE_DIR / "renders"
-CAPTIONS_DIR = BASE_DIR / "captions"
-DATA_DIR = BASE_DIR / "data"
-STATIC_DIR = BASE_DIR / "static"                          # built SPA served by FastAPI
 
-DB_PATH = DATA_DIR / "app.db"
 
-for _d in (UPLOADS_DIR, SAMPLES_DIR, THUMBS_DIR, RENDERS_DIR, CAPTIONS_DIR, DATA_DIR,
-           FONTS_DIR, MUSIC_DIR, SFX_DIR, TEMPLATES_DIR):
+def _migrate_legacy_db() -> None:
+    """Earlier versions kept SQLite in <root>/data/app.db — move it once so
+    existing projects survive the layout change."""
+    legacy = BASE_DIR / "data" / "app.db"
+    if legacy == DB_PATH or DB_PATH.exists() or not legacy.is_file():
+        return
+    try:
+        shutil.move(str(legacy), str(DB_PATH))
+        for suffix in ("-wal", "-shm"):
+            leftover = legacy.with_suffix(legacy.suffix + suffix)
+            if leftover.is_file():
+                shutil.move(str(leftover), str(DB_PATH.with_suffix(DB_PATH.suffix + suffix)))
+    except OSError:
+        pass
+
+
+_migrate_legacy_db()
+
+for _d in (UPLOADS_DIR, SAMPLES_DIR, THUMBS_DIR, RENDERS_DIR, CAPTIONS_DIR,
+           DB_PATH.parent, FONTS_DIR, MUSIC_DIR, SFX_DIR, TEMPLATES_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------- engines
@@ -74,6 +138,20 @@ SILENCE_MIN_DUR = float(os.environ.get("SILENCE_MIN_DUR", "0.35"))
 TARGET_DURATIONS = [15, 30, 45, 60]
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "2048"))
 
+# Hosted free tiers have no persistent volume: uploads/renders vanish on
+# restart or redeploy. Set by render.yaml so the UI can say so out loud.
+EPHEMERAL_STORAGE = os.environ.get("EPHEMERAL_STORAGE", "").lower() in ("1", "true", "yes")
+DEPLOY_TARGET = os.environ.get("DEPLOY_TARGET", "").strip()      # e.g. "render"
+
+
+def port(default: int = 8000) -> int:
+    """Port from $PORT (Render/Heroku/Fly) with a sane local default."""
+    try:
+        return int(os.environ.get("PORT") or default)
+    except (TypeError, ValueError):
+        return default
+
+
 
 def ai_engine_name() -> str:
     if GEMINI_API_KEY:
@@ -95,11 +173,18 @@ def stt_engine_name() -> str:
 
 
 def system_status() -> dict:
+    """Everything the UI (and /api/health) needs to describe this instance."""
     return {
+        "app": APP_NAME,
+        "version": APP_VERSION,
         "ffmpeg": bool(FFMPEG_BIN),
         "ffmpeg_path": FFMPEG_BIN,
         "stt_engine": stt_engine_name(),
         "ai_engine": ai_engine_name(),
         "gemini_configured": bool(GEMINI_API_KEY),
         "ollama_configured": bool(OLLAMA_BASE_URL),
+        "max_upload_mb": MAX_UPLOAD_MB,
+        "data_dir": str(DATA_ROOT),
+        "ephemeral_storage": EPHEMERAL_STORAGE or DATA_FALLBACK,
+        "deploy_target": DEPLOY_TARGET or "local",
     }
